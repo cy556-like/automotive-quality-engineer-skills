@@ -27,8 +27,13 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-# 会话存储目录
-SESSION_DIR = os.path.expanduser("~/.qi-sessions")
+# 会话存储根目录
+SESSION_ROOT = os.path.expanduser("~/.qi-sessions")
+
+# 文件生命周期模式:
+# "session" — 文件跟随对话生命周期，删除对话时清理对应目录
+# "persistent" — 文件持久化保存，不受对话生命周期影响
+FILE_LIFECYCLE = "session"
 
 # GitHub云端备份配置（可选，留空则不备份）
 GITHUB_BACKUP = {
@@ -40,16 +45,27 @@ GITHUB_BACKUP = {
 }
 
 
+def get_session_dir(session_id):
+    """获取会话专属目录（每个对话一个独立目录）"""
+    return os.path.join(SESSION_ROOT, session_id)
+
 def get_session_path(session_id):
     """获取会话文件路径"""
-    return os.path.join(SESSION_DIR, f"{session_id}.json")
+    return os.path.join(get_session_dir(session_id), "session.json")
+
+def get_session_output_dir(session_id):
+    """获取会话输出文件目录（所有生成的文档都放这里）"""
+    return os.path.join(get_session_dir(session_id), "outputs")
 
 
 def create_session(skill, project, description=""):
-    """创建新的工作会话"""
-    os.makedirs(SESSION_DIR, exist_ok=True)
-    
+    """创建新的工作会话（每个对话一个独立目录）"""
     session_id = f"{skill}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    
+    # 创建会话专属目录和输出子目录
+    session_dir = get_session_dir(session_id)
+    os.makedirs(session_dir, exist_ok=True)
+    os.makedirs(get_session_output_dir(session_id), exist_ok=True)
     
     session = {
         "session_id": session_id,
@@ -240,7 +256,7 @@ def resume_session(session_id):
     }
     
     # 同时输出JSON格式供程序读取
-    resume_json_path = os.path.join(SESSION_DIR, f"{session_id}_resume.json")
+    resume_json_path = os.path.join(get_session_dir(session_id), f"{session_id}_resume.json")
     with open(resume_json_path, 'w', encoding='utf-8') as f:
         json.dump(resume_data, f, ensure_ascii=False, indent=2)
     print(f"\n💾 恢复数据已保存: {resume_json_path}")
@@ -250,14 +266,18 @@ def resume_session(session_id):
 
 def list_sessions(status_filter=None):
     """列出所有工作会话"""
-    if not os.path.exists(SESSION_DIR):
+    if not os.path.exists(SESSION_ROOT):
         print("暂无工作会话")
         return
     
     sessions = []
-    for f in os.listdir(SESSION_DIR):
-        if f.endswith('.json') and not f.endswith('_resume.json'):
-            with open(os.path.join(SESSION_DIR, f), 'r', encoding='utf-8') as fp:
+    for d in os.listdir(SESSION_ROOT):
+        session_dir = os.path.join(SESSION_ROOT, d)
+        if not os.path.isdir(session_dir):
+            continue
+        session_path = os.path.join(session_dir, "session.json")
+        if os.path.exists(session_path):
+            with open(session_path, 'r', encoding='utf-8') as fp:
                 session = json.load(fp)
                 if status_filter is None or session.get("status") == status_filter:
                     sessions.append(session)
@@ -299,6 +319,139 @@ def complete_session(session_id):
         json.dump(session, f, ensure_ascii=False, indent=2)
     
     print(f"✅ 会话已标记为完成: {session_id}")
+
+
+def destroy_session(session_id, confirm=False):
+    """彻底销毁会话及其所有关联文件（对话删除时调用）
+    
+    删除范围：
+    - 会话目录（包含session.json、所有检查点数据）
+    - 输出文件目录（包含所有生成的docx/pptx/xlsx等）
+    - 等同于"删除对话 → 清理一切"
+    """
+    session_dir = get_session_dir(session_id)
+    session_path = get_session_path(session_id)
+    
+    if not os.path.exists(session_dir):
+        print(f"❌ 会话目录不存在: {session_id}")
+        return
+    
+    # 统计要删除的文件
+    file_count = 0
+    total_size = 0
+    for root, dirs, files in os.walk(session_dir):
+        for f in files:
+            fp = os.path.join(root, f)
+            file_count += 1
+            total_size += os.path.getsize(fp)
+    
+    size_mb = total_size / (1024 * 1024)
+    
+    if not confirm:
+        print(f"⚠️ 即将删除会话: {session_id}")
+        print(f"   文件数量: {file_count}")
+        print(f"   总大小: {size_mb:.2f} MB")
+        print(f"   包含目录: {session_dir}")
+        print(f"\n   如确认删除，请加 --confirm 参数")
+        return
+    
+    import shutil
+    shutil.rmtree(session_dir)
+    
+    # 同时清理GitHub上的备份
+    if GITHUB_BACKUP["enabled"]:
+        _delete_github_backup(session_id)
+    
+    print(f"🗑️ 会话已彻底销毁: {session_id}")
+    print(f"   已删除 {file_count} 个文件 ({size_mb:.2f} MB)")
+    print(f"   目录已清理: {session_dir}")
+
+
+def destroy_all_sessions(confirm=False):
+    """销毁所有会话及文件（慎用！）"""
+    if not os.path.exists(SESSION_ROOT):
+        print("暂无会话数据")
+        return
+    
+    # 统计
+    session_dirs = [d for d in os.listdir(SESSION_ROOT) 
+                    if os.path.isdir(os.path.join(SESSION_ROOT, d))]
+    
+    if not session_dirs:
+        print("暂无会话数据")
+        return
+    
+    file_count = 0
+    total_size = 0
+    for sd in session_dirs:
+        sd_path = os.path.join(SESSION_ROOT, sd)
+        for root, dirs, files in os.walk(sd_path):
+            for f in files:
+                fp = os.path.join(root, f)
+                file_count += 1
+                total_size += os.path.getsize(fp)
+    
+    size_mb = total_size / (1024 * 1024)
+    
+    if not confirm:
+        print(f"⚠️ 即将删除所有会话 ({len(session_dirs)}个)")
+        print(f"   文件数量: {file_count}")
+        print(f"   总大小: {size_mb:.2f} MB")
+        print(f"\n   如确认删除，请加 --confirm 参数")
+        return
+    
+    import shutil
+    shutil.rmtree(SESSION_ROOT)
+    os.makedirs(SESSION_ROOT, exist_ok=True)
+    
+    print(f"🗑️ 所有会话已彻底销毁")
+    print(f"   已删除 {len(session_dirs)} 个会话")
+    print(f"   已删除 {file_count} 个文件 ({size_mb:.2f} MB)")
+
+
+def _delete_github_backup(session_id):
+    """删除GitHub上的会话备份"""
+    import base64
+    import urllib.request
+    import urllib.error
+    
+    github_path = f"{GITHUB_BACKUP['path']}{session_id}.json"
+    api_url = f"https://api.github.com/repos/{GITHUB_BACKUP['repo']}/contents/{github_path}"
+    
+    # 先获取sha
+    req = urllib.request.Request(
+        f"{api_url}?ref={GITHUB_BACKUP['branch']}",
+        headers={"Authorization": f"token {GITHUB_BACKUP['token']}"}
+    )
+    try:
+        with urllib.request.urlopen(req) as resp:
+            data = json.loads(resp.read().decode())
+            sha = data.get("sha")
+    except urllib.error.HTTPError:
+        print("   ☁️ GitHub备份不存在或已删除")
+        return
+    
+    # 删除
+    payload = {
+        "message": f"destroy session: {session_id}",
+        "sha": sha,
+        "branch": GITHUB_BACKUP["branch"]
+    }
+    data = json.dumps(payload).encode('utf-8')
+    req = urllib.request.Request(
+        api_url,
+        data=data,
+        headers={
+            "Authorization": f"token {GITHUB_BACKUP['token']}",
+            "Content-Type": "application/json"
+        },
+        method="DELETE"
+    )
+    try:
+        with urllib.request.urlopen(req) as resp:
+            print(f"   ☁️ GitHub备份已删除")
+    except urllib.error.HTTPError as e:
+        print(f"   ⚠️ GitHub备份删除失败: {e.code}")
 
 
 def backup_to_github(session_id):
@@ -391,8 +544,10 @@ def restore_from_github(session_id):
             data = json.loads(resp.read().decode())
             content = base64.b64decode(data["content"]).decode('utf-8')
         
-        # 恢复到本地
-        os.makedirs(SESSION_DIR, exist_ok=True)
+        # 恢复到本地（使用新的目录结构）
+        session_dir = get_session_dir(session_id)
+        os.makedirs(session_dir, exist_ok=True)
+        os.makedirs(get_session_output_dir(session_id), exist_ok=True)
         session_path = get_session_path(session_id)
         with open(session_path, 'w', encoding='utf-8') as f:
             f.write(content)
@@ -407,7 +562,8 @@ def restore_from_github(session_id):
 def main():
     parser = argparse.ArgumentParser(description='工作会话状态管理器')
     parser.add_argument('--action', required=True, 
-                       choices=['create', 'checkpoint', 'resume', 'list', 'complete', 
+                       choices=['create', 'checkpoint', 'resume', 'list', 'complete',
+                                'destroy', 'destroy-all',
                                 'backup', 'restore', 'pull'],
                        help='操作类型')
     parser.add_argument('--session-id', help='会话ID')
@@ -419,6 +575,7 @@ def main():
     parser.add_argument('--output-file', help='输出文件路径')
     parser.add_argument('--next-hint', default='', help='下一步操作提示')
     parser.add_argument('--status', help='过滤状态(list时使用)')
+    parser.add_argument('--confirm', action='store_true', help='确认删除（destroy时必须）')
     parser.add_argument('--github-token', help='GitHub token（覆盖默认配置）')
     parser.add_argument('--github-repo', help='GitHub仓库（覆盖默认配置）')
     
@@ -473,6 +630,15 @@ def main():
         if GITHUB_BACKUP["enabled"]:
             backup_to_github(args.session_id)
     
+    elif args.action == 'destroy':
+        if not args.session_id:
+            print("❌ 销毁会话需要 --session-id 参数")
+            sys.exit(1)
+        destroy_session(args.session_id, args.confirm)
+    
+    elif args.action == 'destroy-all':
+        destroy_all_sessions(args.confirm)
+    
     elif args.action == 'backup':
         if not args.session_id:
             print("❌ 备份需要 --session-id 参数")
@@ -502,12 +668,17 @@ def main():
             with urllib.request.urlopen(req) as resp:
                 files = json.loads(resp.read().decode())
             
-            os.makedirs(SESSION_DIR, exist_ok=True)
+            os.makedirs(get_session_dir("temp"), exist_ok=True)
+            # 拉取到各自会话目录
             count = 0
             for f in files:
                 if f["name"].endswith(".json") and not f["name"].endswith("_resume.json"):
+                    # 从文件名解析session_id
+                    sid = f["name"].replace(".json", "")
+                    session_dir = get_session_dir(sid)
+                    os.makedirs(session_dir, exist_ok=True)
                     content_url = f["download_url"]
-                    urllib.request.urlretrieve(content_url, os.path.join(SESSION_DIR, f["name"]))
+                    urllib.request.urlretrieve(content_url, os.path.join(session_dir, "session.json"))
                     count += 1
             
             print(f"☁️ 已从GitHub拉取{count}个会话文件到本地")
