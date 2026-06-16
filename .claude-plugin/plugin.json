@@ -1,0 +1,43 @@
+{
+  "name": "automotive-quality-engineer-skills",
+  "description": "汽车行业质量改进工程师AI Skills工具集 - 涵盖IATF 16949、五大核心工具(APQP/FMEA/SPC/MSA/PPAP)、8D/DMAIC/PDCA等质量改进方法论，支持Word/PPT/Excel文档自动生成",
+  "version": "1.0.0",
+  "author": { "name": "cy556-like" },
+  "license": "MIT",
+  "keywords": [
+    "automotive",
+    "quality-engineer",
+    "IATF-16949",
+    "APQP",
+    "FMEA",
+    "SPC",
+    "MSA",
+    "PPAP",
+    "8D",
+    "VDA6.3",
+    "DMAIC",
+    "docx",
+    "pptx",
+    "xlsx",
+    "python-docx",
+    "python-pptx",
+    "openpyxl",
+    "quality-improvement",
+    "six-sigma",
+    "lean"
+  ],
+  "skills": [
+    "./skills/qi-engineer",
+    "./skills/apqp",
+    "./skills/fmea",
+    "./skills/spc",
+    "./skills/msa",
+    "./skills/ppap",
+    "./skills/8d-report",
+    "./skills/vda6-3",
+    "./skills/dmaic",
+    "./skills/qi-docx",
+    "./skills/qi-pptx",
+    "./skills/qi-xlsx"
+  ]
+}

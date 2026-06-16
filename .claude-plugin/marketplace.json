@@ -1,0 +1,12 @@
+{
+  "name": "automotive-quality-engineer-skills",
+  "owner": { "name": "cy556-like" },
+  "plugins": [
+    {
+      "name": "automotive-quality-engineer-skills",
+      "source": "./",
+      "version": "1.0.0",
+      "license": "MIT"
+    }
+  ]
+}
