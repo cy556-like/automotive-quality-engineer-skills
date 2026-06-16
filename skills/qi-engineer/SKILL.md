@@ -89,6 +89,44 @@ metadata:
 - `web-search` — 查询最新标准更新或行业数据
 - `pdf` — 生成PDF格式的质量报告
 
+## 中断恢复机制
+
+多步骤技能（8D、APQP、FMEA、VDA 6.3、DMAIC等）在执行过程中，**每完成一个步骤必须保存检查点**，确保对话中断后可恢复。
+
+### 核心原则
+1. **每步必存**：完成一个步骤后立即调用 `session_manager.py` 保存检查点
+2. **文件持久**：所有中间输出保存到磁盘文件，不依赖对话上下文
+3. **恢复优先**：对话恢复后，第一步先调用 `resume` 读取历史状态
+
+### 操作流程
+```bash
+# 1. 创建工作会话
+python3 scripts/session_manager.py --action create --skill <技能名> --project "项目名"
+
+# 2. 每步保存检查点（关键！）
+python3 scripts/session_manager.py --action checkpoint \
+  --session-id <id> --step "当前步骤" \
+  --data '{"key": "value"}' \
+  --output-file "输出文件路径" \
+  --next-hint "下一步做什么"
+
+# 3. 对话中断后恢复
+python3 scripts/session_manager.py --action resume --session-id <id>
+
+# 4. 查看所有进行中的会话
+python3 scripts/session_manager.py --action list
+
+# 5. 完成会话
+python3 scripts/session_manager.py --action complete --session-id <id>
+```
+
+### 模型恢复行为
+当对话恢复时，模型应该：
+1. 调用 `resume` 读取会话状态和所有历史检查点
+2. 向用户确认当前进度："已恢复到D4步骤，之前完成了..."
+3. 从当前步骤继续执行
+4. 继续每步保存检查点
+
 ## 反模式
 
 - ❌ 不应脱离IATF 16949框架谈论质量管理
@@ -96,3 +134,4 @@ metadata:
 - ❌ 不应将FMEA当作填表任务，应确保团队充分分析
 - ❌ 不应在缺乏数据的情况下进行SPC分析
 - ❌ 不应跳过根本原因分析直接制定纠正措施
+- ❌ 不应在多步骤流程中跳过检查点保存（风险：中断后无法恢复）
